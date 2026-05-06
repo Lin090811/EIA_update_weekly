@@ -7,3 +7,4 @@ lxml
 dataframe_image
 requests
 numpy
+pyarrow
