@@ -1,0 +1,26 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+EIA_update_system
+
+# Python
+__pycache__/
+*.pyc
+
+# Data cache (large files, managed by GitHub Actions artifact)
+Py_Version/data/*.bak
+Py_Version/data/eia_history.csv
+Py_Version/data/eia_weekly.csv
+
+# Generated images (pushed to EIA-data repo instead)
+Py_Version/pic/*.png
+
+# EIA-images-repo (separate git repo)
+Py_Version/eia-images-repo/
+
+# Logs
+Py_Version/logs/
+
+# Config (contains webhook tokens - use GitHub Secrets instead)
+# Py_Version/config.ini
