@@ -1,0 +1,200 @@
+name: EIA Weekly Auto Update
+
+on:
+  schedule:
+    - cron: '30 15 * * 4'
+  workflow_dispatch:
+
+jobs:
+  eia-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          cd Py_Version
+          pip install polars pandas seaborn matplotlib pillow lxml dataframe_image requests numpy
+
+      - name: Create data & pic dirs
+        run: |
+          mkdir -p Py_Version/data Py_Version/pic
+
+      - name: Download cached data (if exists)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: eia-data-cache
+          path: Py_Version/data/
+
+      - name: Run EIA update (fetch + clean + chart + push)
+        env:
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+        run: |
+          cd Py_Version
+          python3 << 'PYEOF'
+          import os, sys, datetime, json, requests, time, base64, hmac, hashlib, subprocess, shutil
+
+          print("=" * 60)
+          print("EIA 自动化流程开始")
+          print(f"时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+          print("=" * 60)
+
+          results = []
+
+          # Step 1: 数据更新
+          try:
+              print("\n[1/4] 增量更新 EIA 数据...")
+              from spider_clean import one_year_update, data_clean
+              if not os.path.exists("./data/eia_history.csv"):
+                  print("  首次运行，执行全量更新...")
+                  from spider_clean import all_update
+                  all_update()
+              else:
+                  one_year_update()
+              data_clean()
+              results.append({"step": "数据更新", "status": "ok"})
+              print("  ✅ 数据更新完成")
+          except Exception as e:
+              print(f"  ❌ 数据更新失败: {e}")
+              import traceback; traceback.print_exc()
+              results.append({"step": "数据更新", "status": "fail", "error": str(e)})
+
+          # Step 2: 表格图
+          try:
+              print("\n[2/4] 生成表格图...")
+              from tab_update import tab_update
+              tab_update()
+              results.append({"step": "表格图", "status": "ok"})
+              print("  ✅ 表格图生成完成")
+          except Exception as e:
+              print(f"  ❌ 表格图失败: {e}")
+              import traceback; traceback.print_exc()
+              results.append({"step": "表格图", "status": "fail", "error": str(e)})
+
+          # Step 3: 季节图 + 合并图
+          try:
+              print("\n[3/4] 生成季节图和合并图...")
+              from pic_update import pic_update, tab_pic_combine
+              pic_update()
+              tab_pic_combine()
+              results.append({"step": "季节图+合并", "status": "ok"})
+              print("  ✅ 图表生成完成")
+          except Exception as e:
+              print(f"  ❌ 图表失败: {e}")
+              import traceback; traceback.print_exc()
+              results.append({"step": "季节图+合并", "status": "fail", "error": str(e)})
+
+          # Step 4: 上传图片到 EIA-data 仓库 + 钉钉推送
+          webhook = os.environ.get('DINGTALK_WEBHOOK', '')
+          secret = os.environ.get('DINGTALK_SECRET', '')
+
+          if os.path.exists('./pic/eia.png') and webhook:
+              try:
+                  print("\n[4/4] 推送到钉钉...")
+
+                  date_folder = datetime.datetime.now().strftime('%Y-%m-%d')
+                  tmp_dir = '/tmp/eia-images-repo'
+
+                  if os.path.exists(tmp_dir):
+                      subprocess.run(['git', '-C', tmp_dir, 'pull'], capture_output=True)
+                  else:
+                      subprocess.run(
+                          ['git', 'clone', '--depth', '1',
+                           f'https://x-access-token:{os.environ.get("GITHUB_TOKEN", "")}@github.com/Lin090811/EIA-data.git',
+                           tmp_dir], capture_output=True
+                      )
+
+                  target_dir = os.path.join(tmp_dir, date_folder)
+                  os.makedirs(target_dir, exist_ok=True)
+
+                  for fname in ['eia.png', 'eia_pic.png', 'eia_tab.png']:
+                      src = f'./pic/{fname}'
+                      dst = os.path.join(target_dir, fname)
+                      if os.path.exists(src):
+                          shutil.copy2(src, dst)
+                          print(f"  复制 {fname} -> {date_folder}/")
+
+                  subprocess.run(['git', '-C', tmp_dir, 'add', '-A'], capture_output=True)
+                  subprocess.run(['git', '-C', tmp_dir, 'commit', '-m', f'EIA update {date_folder}'], capture_output=True)
+                  subprocess.run(['git', '-C', tmp_dir, 'push', 'origin', 'main'], capture_output=True, timeout=120)
+
+                  timestamp = int(time.time())
+                  img_raw_url = f'https://raw.githubusercontent.com/Lin090811/EIA-data/main/{date_folder}/eia.png?v={timestamp}'
+
+                  now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+                  md_text = f"### EIA 油品数据已更新\n\n- 时间: {now_str}\n\n#### 合并图\n\n![eia.png]({img_raw_url})\n\n"
+                  md_text += f"#### 季节图\n\n![eia_pic.png](https://raw.githubusercontent.com/Lin090811/EIA-data/main/{date_folder}/eia_pic.png?v={timestamp})\n\n"
+
+                  msg = {
+                      'msgtype': 'markdown',
+                      'markdown': {'title': 'EIA 数据更新完成', 'text': md_text}
+                  }
+
+                  wh = webhook
+                  if secret:
+                      ts = str(round(time.time() * 1000))
+                      sign_str = f"{ts}\n{secret}"
+                      hmac_code = hmac.new(secret.encode(), sign_str.encode(), hashlib.sha256).digest()
+                      sign = base64.b64encode(hmac_code).decode()
+                      wh = f"{wh}&timestamp={ts}&sign={sign}"
+
+                  r = requests.post(wh, json=msg, timeout=30)
+                  resp = r.json()
+                  if resp.get('errcode', -1) == 0:
+                      print("  ✅ 钉钉推送成功")
+                      results.append({"step": "钉钉推送", "status": "ok"})
+                  else:
+                      print(f"  ⚠️ 钉钉返回: {resp}")
+                      results.append({"step": "钉钉推送", "status": "warn", "detail": str(resp)})
+              except Exception as e:
+                  print(f"  ❌ 推送异常: {e}")
+                  import traceback; traceback.print_exc()
+                  results.append({"step": "推送", "status": "fail", "error": str(e)})
+          elif not webhook:
+              print("\n[4/4] 跳过推送（未配置 DINGTALK_WEBHOOK）")
+          else:
+              print("\n[4/4] 跳过推送（未生成图片）")
+
+          # 汇总
+          print("\n" + "=" * 60)
+          print("执行汇总:")
+          print("=" * 60)
+          for r in results:
+              icon = {"ok": "✅", "fail": "❌", "warn": "⚠️"}.get(r["status"], "❓")
+              detail = r.get("error") or r.get("detail", "")
+              print(f"  {icon} {r['step']}: {detail}" if detail else f"  {icon} {r['step']}")
+
+          failed = any(r["status"] == "fail" for r in results)
+          sys.exit(1 if failed else 0)
+          PYEOF
+
+      - name: Upload data cache for next run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eia-data-cache
+          path: Py_Version/data/
+          retention-days: 7
+
+      - name: Upload generated pics (for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eia-pics
+          path: Py_Version/pic/*.png
+          retention-days: 7
