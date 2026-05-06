@@ -1,0 +1,9 @@
+polars
+pandas
+seaborn
+matplotlib
+pillow
+lxml
+dataframe_image
+requests
+numpy
