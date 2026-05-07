@@ -146,7 +146,10 @@ jobs:
                       'markdown': {'title': 'EIA 数据更新完成', 'text': md_text}
                   }
 
-                  wh = webhook
+                  wh = webhook.strip()
+                  # 确保 URL 有 https:// 前缀
+                  if wh and not wh.startswith(('http://', 'https://')):
+                      wh = 'https://' + wh
                   if secret:
                       ts = str(round(time.time() * 1000))
                       sign_str = f"{ts}\n{secret}"
