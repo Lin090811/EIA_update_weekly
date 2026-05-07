@@ -134,10 +134,12 @@ jobs:
                   subprocess.run(['git', '-C', tmp_dir, 'commit', '-m', f'EIA update {date_folder}'], capture_output=True)
                   subprocess.run(['git', '-C', tmp_dir, 'push', 'origin', 'main'], capture_output=True, timeout=120)
 
-                  timestamp = int(time.time())   # ← 这行必须存在
+                                    timestamp = int(time.time())
                   img_raw_url = f'https://raw.githubusercontent.com/Lin090811/EIA-data/main/{date_folder}/eia.png?v={timestamp}'
-                  img_pic_url = f'https://raw.githubusercontent.com/...'
-                 # DingTalk 不支持 ![](url)，改为纯文本+链接
+                  img_pic_url = f'https://raw.githubusercontent.com/Lin090811/EIA-data/main/{date_folder}/eia_pic.png?v={timestamp}'
+
+                  now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+                  # DingTalk 不支持 ![](url)，改为纯文本+链接
                   md_text = f"### EIA 油品数据已更新\n\n- 时间: {now_str}\n\n"
                   md_text += f"**合并图链接：** [{img_raw_url}]({img_raw_url})\n\n"
                   md_text += f"**季节图链接：** [{img_pic_url}]({img_pic_url})\n\n"
